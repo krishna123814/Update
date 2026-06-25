@@ -26,7 +26,7 @@ FYERS_CLIENT_ID  = "FAJ86844"
 FYERS_PASSWORD   = "2552"
 FYERS_REDIRECT   = "https://www.google.com"
 
-GITHUB_TOKEN     = "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"
+GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
 GITHUB_REPO      = "krishna123814/Update"
 GITHUB_BRANCH    = "main"
 
