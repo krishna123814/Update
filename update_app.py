@@ -359,9 +359,9 @@ def fyers_fetch_candles(
 # ══════════════════════════════════════════════════════════════
 #  BINANCE DATA FETCH — with pagination
 # ══════════════════════════════════════════════════════════════
-BINANCE_INTERVAL = "1h"   # fetch 1h then resample to 160m / 8h etc.
-# Actually Binance supports 1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w,1M
-# 160m is NOT a standard Binance interval. We fetch 1h and resample.
+BINANCE_INTERVAL = "10m"  # 10min fetch karo: 160/10=16 exact, 480/10=48 exact
+# 1h use karna galat tha: 160%60 != 0, kuch windows mein data miss hota tha
+# Binance supports: 1m,3m,5m,10m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w,1M
 
 def binance_fetch_candles(
     symbol: str,
@@ -407,7 +407,14 @@ def binance_fetch_candles(
         "open_time","Open","High","Low","Close","Volume",
         "close_time","qav","num_trades","tbbav","tbqav","ignore"
     ])
-    df["datetime"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_localize(None)
+    # UTC → IST (+5:30) — sabhi intervals ke liye (10m, 1d, sab)
+    # 1d: Binance UTC 00:00 + 5:30 = IST 05:30 ✅
+    # 10m: UTC open_time + 5:30 = IST time ✅
+    IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+    df["datetime"] = (
+        pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        .dt.tz_localize(None) + IST_OFFSET
+    )
     df = df.set_index("datetime")[["Open","High","Low","Close"]].astype(float)
     df = df[~df.index.duplicated(keep="last")].sort_index()
     return df
@@ -488,51 +495,58 @@ def update_banknifty(data: dict, access_token: str) -> dict:
 def update_btc(data: dict) -> dict:
     """
     Update all BTC timeframes.
-    Base: 1h from Binance → resample to 160m, 8h.
-    1d from Binance directly → 3d, 9d, 27d.
+    Base: 10min from Binance → resample to 160m, 8h.
+      - 10min isliye: 160/10=16 (exact), 480/10=48 (exact) → perfect alignment
+      - 1h se 160m galat tha: 160%60 != 0, windows 3/6/9 mein data miss hota tha
+    1d from Binance → IST convert → 3d, 9d, 27d.
+    binance_fetch_candles ab UTC→IST conversion khud karta hai (sabhi intervals ke liye).
     """
+    IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+    # from_dt Binance ko UTC chahiye; index IST mein hai isliye -5:30 karke UTC lo
     now_utc = datetime.datetime.utcnow()
 
-    # ── Fetch 1h data (for 160m and 8h) ──
+    # ── Fetch 10min data (for 160m and 8h) ──
     last_160m = data["160m"].index[-1]
-    st.write(f"  📥 1h fetch (for 160m/8h): {last_160m.date()} → today")
-    new_1h = binance_fetch_candles(
-        BTC_SYMBOL, "1h",
-        from_dt=last_160m - datetime.timedelta(days=2),
+    # last_160m IST mein hai → UTC mein convert karo Binance ke liye
+    from_dt_utc = last_160m - IST_OFFSET - datetime.timedelta(days=2)
+    st.write(f"  📥 10min fetch (for 160m/8h): {last_160m.date()} → today")
+    new_10m = binance_fetch_candles(
+        BTC_SYMBOL, "10m",
+        from_dt=from_dt_utc,
         to_dt=now_utc,
     )
+    # binance_fetch_candles ab IST index return karta hai (UTC+5:30 already applied)
 
-    if not new_1h.empty:
-        # Resample 1h → 160m anchored at 05:30 IST
-        # Convert UTC → IST for correct anchor alignment
-        IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
-        new_1h_ist = new_1h.copy()
-        new_1h_ist.index = new_1h_ist.index + IST_OFFSET
-
-        anchor_160m = pd.Timestamp("05:30:00").time()
-        new_160m = new_1h_ist.resample("160min", offset="5h30min").agg(
+    if not new_10m.empty:
+        # Resample 10min → 160min anchored at 05:30 IST
+        # 160/10 = 16 candles exactly per window ✅
+        new_160m = new_10m.resample("160min", offset="5h30min").agg(
             {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
         ).dropna()
         data["160m"] = merge_df(data["160m"], new_160m)
         st.write(f"  ✅ 160m updated → {len(data['160m'])} rows")
 
-        # Resample 1h → 8h anchored at 05:30 IST
-        new_8h = new_1h_ist.resample("8h", offset="5h30min").agg(
+        # Resample 10min → 8h anchored at 05:30 IST
+        # 480/10 = 48 candles exactly per window ✅
+        new_8h = new_10m.resample("8h", offset="5h30min").agg(
             {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
         ).dropna()
         data["8h"] = merge_df(data["8h"], new_8h)
         st.write(f"  ✅ 8h updated → {len(data['8h'])} rows")
     else:
-        st.warning("1h: koi nayi candles nahi mili (160m/8h update skip).")
+        st.warning("10min: koi nayi candles nahi mili (160m/8h update skip).")
 
     # ── Fetch 1d data ──
     last_1d = data["1d"].index[-1]
+    # last_1d IST 05:30 hai → UTC mein convert karo
+    from_dt_1d_utc = last_1d - IST_OFFSET - datetime.timedelta(days=5)
     st.write(f"  📥 1d fetch: {last_1d.date()} → today")
     new_1d = binance_fetch_candles(
         BTC_SYMBOL, "1d",
-        from_dt=last_1d - datetime.timedelta(days=5),
+        from_dt=from_dt_1d_utc,
         to_dt=now_utc,
     )
+    # binance_fetch_candles: 1d UTC 00:00 + 5:30 = IST 05:30 ✅
     if not new_1d.empty:
         data["1d"] = merge_df(data["1d"], new_1d)
     st.write(f"  ✅ 1d updated → {len(data['1d'])} rows")
@@ -700,7 +714,9 @@ if st.session_state.bn_data or st.session_state.btc_data:
         for tf in ["160m","8h","1d","3d","9d","27d"]:
             df = st.session_state.btc_data.get(tf)
             if df is not None and not df.empty:
-                btc_info[tf] = f"{len(df)} rows | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M')}"
+                last_ts = df.index[-1]
+                trade_date = (last_ts - pd.Timedelta(hours=5, minutes=30)).date()
+                btc_info[tf] = f"{len(df)} rows | Trade Date: {trade_date} | Last: {last_ts.strftime('%H:%M')}"
         info_df2 = pd.DataFrame.from_dict(btc_info, orient="index", columns=["Info"])
         st.dataframe(info_df2, use_container_width=True)
 
