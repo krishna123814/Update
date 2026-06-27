@@ -30,8 +30,8 @@ GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
 GITHUB_REPO      = "krishna123814/Update"
 GITHUB_BRANCH    = "main"
 
-BN_GZ_FILENAME   = "banknifty_all_tf.pkl.gz"
-BTC_GZ_FILENAME  = "btc_all_tf.pkl.gz"
+BN_GZ_FILENAME   = "banknifty_all_timeframes_json.gz"
+BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_master_all_timeframes_json.gz"
 
 BN_SYMBOL        = "NSE:NIFTYBANK-INDEX"
 BTC_SYMBOL       = "BTCUSDT"
@@ -645,7 +645,7 @@ with col5:
     if st.session_state.bn_data and st.session_state.bn_updated:
         bn_bytes = gz_to_bytes(st.session_state.bn_data)
         st.download_button(
-            label="⬇️ banknifty_all_tf.pkl.gz",
+            label=f"⬇️ {BN_GZ_FILENAME}",
             data=bn_bytes,
             file_name=BN_GZ_FILENAME,
             mime="application/gzip",
@@ -662,7 +662,7 @@ with col6:
     if st.session_state.btc_data and st.session_state.btc_updated:
         btc_bytes = gz_to_bytes(st.session_state.btc_data)
         st.download_button(
-            label="⬇️ btc_all_tf.pkl.gz",
+            label=f"⬇️ {BTC_GZ_FILENAME}",
             data=btc_bytes,
             file_name=BTC_GZ_FILENAME,
             mime="application/gzip",
