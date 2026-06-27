@@ -106,6 +106,71 @@ def bytes_to_dict(raw: bytes) -> dict:
         return json.loads(f.read().decode("utf-8"))
 
 
+def parse_bn_json(raw: bytes) -> dict:
+    obj = bytes_to_dict(raw)
+    tf_raw = obj.get("data", obj)
+    result = {}
+    for tf, records in tf_raw.items():
+        if not isinstance(records, list) or len(records) == 0:
+            continue
+        df = pd.DataFrame(records)
+        df = df.rename(columns={"ts": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+        result[tf] = df
+    return result
+
+
+def parse_btc_json(raw: bytes) -> dict:
+    obj = bytes_to_dict(raw)
+    result = {}
+    for tf, records in obj.items():
+        if tf == "meta" or not isinstance(records, list) or len(records) == 0:
+            continue
+        df = pd.DataFrame(records)
+        df = df.rename(columns={"Datetime": "datetime"})
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+        result[tf] = df
+    return result
+
+
+def dict_to_bn_json(data: dict) -> dict:
+    tf_data = {}
+    for tf, df in data.items():
+        records = []
+        for ts, row in df.iterrows():
+            records.append({
+                "ts": ts.strftime("%Y-%m-%d %H:%M"),
+                "o": round(float(row["Open"]), 2),
+                "h": round(float(row["High"]), 2),
+                "l": round(float(row["Low"]), 2),
+                "c": round(float(row["Close"]), 2),
+            })
+        tf_data[tf] = records
+    return {"meta": {"instrument": "Banknifty", "timezone": "IST",
+                     "timeframes": list(data.keys())}, "data": tf_data}
+
+
+def dict_to_btc_json(data: dict) -> dict:
+    result = {}
+    for tf, df in data.items():
+        records = []
+        for ts, row in df.iterrows():
+            records.append({
+                "Datetime": ts.strftime("%Y-%m-%dT%H:%M:%S.000"),
+                "Open":  round(float(row["Open"]), 2),
+                "High":  round(float(row["High"]), 2),
+                "Low":   round(float(row["Low"]), 2),
+                "Close": round(float(row["Close"]), 2),
+            })
+        result[tf] = records
+    return result
+
+
+
 # ══════════════════════════════════════════════════════════════
 #  HELPERS — GITHUB DOWNLOAD
 # ══════════════════════════════════════════════════════════════
@@ -522,7 +587,7 @@ with col1:
         with st.spinner(f"{BN_GZ_FILENAME} download ho raha hai..."):
             raw = github_download(BN_GZ_FILENAME)
         if raw:
-            st.session_state.bn_data = bytes_to_dict(raw)
+            st.session_state.bn_data = parse_bn_json(raw)
             st.session_state.bn_updated = False
             bn_last = st.session_state.bn_data.get("5m", pd.DataFrame())
             last_dt = bn_last.index[-1] if not bn_last.empty else "?"
@@ -535,7 +600,7 @@ with col2:
         with st.spinner(f"{BTC_GZ_FILENAME} download ho raha hai..."):
             raw = github_download(BTC_GZ_FILENAME)
         if raw:
-            st.session_state.btc_data = bytes_to_dict(raw)
+            st.session_state.btc_data = parse_btc_json(raw)
             st.session_state.btc_updated = False
             btc_last = st.session_state.btc_data.get("160m", pd.DataFrame())
             last_dt = btc_last.index[-1] if not btc_last.empty else "?"
@@ -643,7 +708,7 @@ col5, col6 = st.columns(2)
 
 with col5:
     if st.session_state.bn_data and st.session_state.bn_updated:
-        bn_bytes = gz_to_bytes(st.session_state.bn_data)
+        bn_bytes = gz_to_bytes(dict_to_bn_json(st.session_state.bn_data))
         st.download_button(
             label=f"⬇️ {BN_GZ_FILENAME}",
             data=bn_bytes,
@@ -660,7 +725,7 @@ with col5:
 
 with col6:
     if st.session_state.btc_data and st.session_state.btc_updated:
-        btc_bytes = gz_to_bytes(st.session_state.btc_data)
+        btc_bytes = gz_to_bytes(dict_to_btc_json(st.session_state.btc_data))
         st.download_button(
             label=f"⬇️ {BTC_GZ_FILENAME}",
             data=btc_bytes,
