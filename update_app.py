@@ -503,13 +503,23 @@ def update_btc(data: dict) -> dict:
     )
 
     if not new_1h.empty:
-        # Resample 1h → 160m
-        new_160m = resample_ohlc(new_1h, "160min")
+        # Resample 1h → 160m anchored at 05:30 IST
+        # Convert UTC → IST for correct anchor alignment
+        IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+        new_1h_ist = new_1h.copy()
+        new_1h_ist.index = new_1h_ist.index + IST_OFFSET
+
+        anchor_160m = pd.Timestamp("05:30:00").time()
+        new_160m = new_1h_ist.resample("160min", offset="5h30min").agg(
+            {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+        ).dropna()
         data["160m"] = merge_df(data["160m"], new_160m)
         st.write(f"  ✅ 160m updated → {len(data['160m'])} rows")
 
-        # Resample 1h → 8h
-        new_8h = resample_ohlc(new_1h, "8h")
+        # Resample 1h → 8h anchored at 05:30 IST
+        new_8h = new_1h_ist.resample("8h", offset="5h30min").agg(
+            {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+        ).dropna()
         data["8h"] = merge_df(data["8h"], new_8h)
         st.write(f"  ✅ 8h updated → {len(data['8h'])} rows")
     else:
