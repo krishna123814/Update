@@ -30,8 +30,8 @@ GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
 GITHUB_REPO      = "krishna123814/Update"
 GITHUB_BRANCH    = "main"
 
-BN_GZ_FILENAME   = "banknifty_all_timeframes.json.gz"
-BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_master_all_timeframes.json.gz"
+BN_GZ_FILENAME   = "banknifty_5m_csv.json.gz"
+BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_IST_5m.json.gz"
 
 BN_SYMBOL        = "NSE:NIFTYBANK-INDEX"
 BTC_SYMBOL       = "BTCUSDT"
@@ -107,67 +107,82 @@ def bytes_to_dict(raw: bytes) -> dict:
 
 
 def parse_bn_json(raw: bytes) -> dict:
+    """
+    Format: {"meta": {...}, "data": [ {"ts","o","h","l","c"}, ... ]}
+    Sirf 5m raw candles. Koi resampling nahi.
+    """
     obj = bytes_to_dict(raw)
-    tf_raw = obj.get("data", obj)
-    result = {}
-    for tf, records in tf_raw.items():
-        if not isinstance(records, list) or len(records) == 0:
-            continue
-        df = pd.DataFrame(records)
-        df = df.rename(columns={"ts": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
-        df["datetime"] = pd.to_datetime(df["datetime"])
-        df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
-        df = df[~df.index.duplicated(keep="last")].sort_index()
-        result[tf] = df
-    return result
+    records = obj.get("data", obj)
+    if not isinstance(records, list) or len(records) == 0:
+        return {}
+
+    df = pd.DataFrame(records)
+    df = df.rename(columns={"ts": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+
+    return {"5m": df}
 
 
 def parse_btc_json(raw: bytes) -> dict:
+    """
+    Format: [ {"date": "2017-01-01", "candles": [ {"t","o","h","l","c","v"}, ... ]}, ... ]
+    Sirf 5m raw candles (din-wise grouped, yahan flatten kar diya). Koi resampling nahi.
+    """
     obj = bytes_to_dict(raw)
-    result = {}
-    for tf, records in obj.items():
-        if tf == "meta" or not isinstance(records, list) or len(records) == 0:
-            continue
-        df = pd.DataFrame(records)
-        df = df.rename(columns={"Datetime": "datetime"})
-        df["datetime"] = pd.to_datetime(df["datetime"])
-        df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
-        df = df[~df.index.duplicated(keep="last")].sort_index()
-        result[tf] = df
-    return result
+    if not isinstance(obj, list) or len(obj) == 0:
+        return {}
+
+    all_candles = []
+    for day_block in obj:
+        candles = day_block.get("candles", [])
+        all_candles.extend(candles)
+
+    if not all_candles:
+        return {}
+
+    df = pd.DataFrame(all_candles)
+    df = df.rename(columns={"t": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+
+    return {"5m": df}
 
 
 def dict_to_bn_json(data: dict) -> dict:
-    tf_data = {}
-    for tf, df in data.items():
-        records = []
-        for ts, row in df.iterrows():
-            records.append({
-                "ts": ts.strftime("%Y-%m-%d %H:%M"),
+    """Sirf 5m raw data save karo, naye input format jaisa (meta + flat list)."""
+    df = data["5m"]
+    records = []
+    for ts, row in df.iterrows():
+        records.append({
+            "ts": ts.strftime("%Y-%m-%d %H:%M"),
+            "o": round(float(row["Open"]), 2),
+            "h": round(float(row["High"]), 2),
+            "l": round(float(row["Low"]), 2),
+            "c": round(float(row["Close"]), 2),
+        })
+    return {"meta": {"instrument": "Banknifty", "timezone": "IST", "timeframe": "5m"},
+            "data": records}
+
+
+def dict_to_btc_json(data: dict) -> list:
+    """Sirf 5m raw data save karo, naye input format jaisa (date-grouped candles list)."""
+    df = data["5m"]
+    out = []
+    for date, day_df in df.groupby(df.index.date):
+        candles = []
+        for ts, row in day_df.iterrows():
+            candles.append({
+                "t": ts.strftime("%Y-%m-%d %H:%M:%S"),
                 "o": round(float(row["Open"]), 2),
                 "h": round(float(row["High"]), 2),
                 "l": round(float(row["Low"]), 2),
                 "c": round(float(row["Close"]), 2),
             })
-        tf_data[tf] = records
-    return {"meta": {"instrument": "Banknifty", "timezone": "IST",
-                     "timeframes": list(data.keys())}, "data": tf_data}
-
-
-def dict_to_btc_json(data: dict) -> dict:
-    result = {}
-    for tf, df in data.items():
-        records = []
-        for ts, row in df.iterrows():
-            records.append({
-                "Datetime": ts.strftime("%Y-%m-%dT%H:%M:%S.000"),
-                "Open":  round(float(row["Open"]), 2),
-                "High":  round(float(row["High"]), 2),
-                "Low":   round(float(row["Low"]), 2),
-                "Close": round(float(row["Close"]), 2),
-            })
-        result[tf] = records
-    return result
+        out.append({"date": date.strftime("%Y-%m-%d"), "candles": candles})
+    return out
 
 
 
@@ -425,9 +440,7 @@ def binance_fetch_candles(
 # ══════════════════════════════════════════════════════════════
 def update_banknifty(data: dict, access_token: str) -> dict:
     """
-    Update all BankNifty timeframes.
-    Base: 5m from Fyers → resample up.
-    Higher TFs (3d/9d/27d): from 1d.
+    Sirf 5m BankNifty data update karo (Fyers se). Koi resampling nahi.
     """
     now_ist = datetime.datetime.now(IST).replace(tzinfo=None)
 
@@ -453,39 +466,6 @@ def update_banknifty(data: dict, access_token: str) -> dict:
     data["5m"] = merge_df(data["5m"], new_5m)
     st.write(f"  ✅ 5m updated → {len(data['5m'])} rows")
 
-    # ── Resample 5m → 15m, 45m, 135m ──
-    base_5m = data["5m"]
-
-    for tf, minutes in [("15m", 15), ("45m", 45), ("135m", 135)]:
-        rule = f"{minutes}min"
-        resampled = resample_ohlc(base_5m, rule)
-        # Filter market hours
-        resampled = resampled[
-            (resampled.index.time >= datetime.time(9, 15)) &
-            (resampled.index.time <= datetime.time(15, 30))
-        ]
-        data[tf] = resampled
-        st.write(f"  ✅ {tf} resampled → {len(data[tf])} rows")
-
-    # ── Fetch 1d from Fyers ──
-    last_1d = data["1d"].index[-1]
-    st.write(f"  📥 1d fetch: {last_1d.date()} → today")
-    new_1d = fyers_fetch_candles(
-        access_token, BN_SYMBOL, "D",
-        from_dt=last_1d - datetime.timedelta(days=5),
-        to_dt=now_ist,
-    )
-    if not new_1d.empty:
-        data["1d"] = merge_df(data["1d"], new_1d)
-    st.write(f"  ✅ 1d updated → {len(data['1d'])} rows")
-
-    # ── Resample 1d → 3d, 9d, 27d (Option B anchor) ──
-    df_1d = data["1d"]
-    for n, key in [(3, "3d"), (9, "9d"), (27, "27d")]:
-        anchor = data[key].index[-1] if key in data and not data[key].empty else df_1d.index[0]
-        data[key] = resample_nd(df_1d, n, anchor)
-        st.write(f"  ✅ {key} resampled → {len(data[key])} rows")
-
     return data
 
 
@@ -494,69 +474,29 @@ def update_banknifty(data: dict, access_token: str) -> dict:
 # ══════════════════════════════════════════════════════════════
 def update_btc(data: dict) -> dict:
     """
-    Update all BTC timeframes.
-    Base: 10min from Binance → resample to 160m, 8h.
-      - 10min isliye: 160/10=16 (exact), 480/10=48 (exact) → perfect alignment
-      - 1h se 160m galat tha: 160%60 != 0, windows 3/6/9 mein data miss hota tha
-    1d from Binance → IST convert → 3d, 9d, 27d.
-    binance_fetch_candles ab UTC→IST conversion khud karta hai (sabhi intervals ke liye).
+    Sirf 5m BTC data update karo (Binance se). Koi resampling nahi.
     """
     IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
-    # from_dt Binance ko UTC chahiye; index IST mein hai isliye -5:30 karke UTC lo
     now_utc = datetime.datetime.utcnow()
 
-    # ── Fetch 10min data (for 160m and 8h) ──
-    last_160m = data["160m"].index[-1]
-    # last_160m IST mein hai → UTC mein convert karo Binance ke liye
-    from_dt_utc = last_160m - IST_OFFSET - datetime.timedelta(days=2)
-    st.write(f"  📥 10min fetch (for 160m/8h): {last_160m.date()} → today")
-    new_10m = binance_fetch_candles(
-        BTC_SYMBOL, "10m",
+    # ── Fetch new 5m data ──
+    last_5m = data["5m"].index[-1]
+    # last_5m IST mein hai → UTC mein convert karo Binance ke liye
+    from_dt_utc = last_5m - IST_OFFSET - datetime.timedelta(days=1)
+    st.write(f"  📥 5m fetch: {last_5m.date()} → today")
+    new_5m = binance_fetch_candles(
+        BTC_SYMBOL, "5m",
         from_dt=from_dt_utc,
         to_dt=now_utc,
     )
-    # binance_fetch_candles ab IST index return karta hai (UTC+5:30 already applied)
+    # binance_fetch_candles IST index return karta hai (UTC+5:30 already applied)
 
-    if not new_10m.empty:
-        # Resample 10min → 160min anchored at 05:30 IST
-        # 160/10 = 16 candles exactly per window ✅
-        new_160m = new_10m.resample("160min", offset="5h30min").agg(
-            {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
-        ).dropna()
-        data["160m"] = merge_df(data["160m"], new_160m)
-        st.write(f"  ✅ 160m updated → {len(data['160m'])} rows")
+    if new_5m.empty:
+        st.warning("5m: koi nayi candles nahi mili.")
+        return data
 
-        # Resample 10min → 8h anchored at 05:30 IST
-        # 480/10 = 48 candles exactly per window ✅
-        new_8h = new_10m.resample("8h", offset="5h30min").agg(
-            {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
-        ).dropna()
-        data["8h"] = merge_df(data["8h"], new_8h)
-        st.write(f"  ✅ 8h updated → {len(data['8h'])} rows")
-    else:
-        st.warning("10min: koi nayi candles nahi mili (160m/8h update skip).")
-
-    # ── Fetch 1d data ──
-    last_1d = data["1d"].index[-1]
-    # last_1d IST 05:30 hai → UTC mein convert karo
-    from_dt_1d_utc = last_1d - IST_OFFSET - datetime.timedelta(days=5)
-    st.write(f"  📥 1d fetch: {last_1d.date()} → today")
-    new_1d = binance_fetch_candles(
-        BTC_SYMBOL, "1d",
-        from_dt=from_dt_1d_utc,
-        to_dt=now_utc,
-    )
-    # binance_fetch_candles: 1d UTC 00:00 + 5:30 = IST 05:30 ✅
-    if not new_1d.empty:
-        data["1d"] = merge_df(data["1d"], new_1d)
-    st.write(f"  ✅ 1d updated → {len(data['1d'])} rows")
-
-    # ── Resample 1d → 3d, 9d, 27d (Option B anchor) ──
-    df_1d = data["1d"]
-    for n, key in [(3, "3d"), (9, "9d"), (27, "27d")]:
-        anchor = data[key].index[-1] if key in data and not data[key].empty else df_1d.index[0]
-        data[key] = resample_nd(df_1d, n, anchor)
-        st.write(f"  ✅ {key} resampled → {len(data[key])} rows")
+    data["5m"] = merge_df(data["5m"], new_5m)
+    st.write(f"  ✅ 5m updated → {len(data['5m'])} rows")
 
     return data
 
@@ -626,9 +566,9 @@ with col2:
         if raw:
             st.session_state.btc_data = parse_btc_json(raw)
             st.session_state.btc_updated = False
-            btc_last = st.session_state.btc_data.get("160m", pd.DataFrame())
+            btc_last = st.session_state.btc_data.get("5m", pd.DataFrame())
             last_dt = btc_last.index[-1] if not btc_last.empty else "?"
-            st.success(f"✅ Loaded! Last 160m candle: {last_dt}")
+            st.success(f"✅ Loaded! Last 5m candle: {last_dt}")
         else:
             st.error("Download fail hua.")
 
@@ -701,22 +641,20 @@ if st.session_state.bn_data or st.session_state.btc_data:
     if st.session_state.bn_data:
         st.markdown("**BankNifty**")
         bn_info = {}
-        for tf in ["5m","15m","45m","135m","1d","3d","9d","27d"]:
-            df = st.session_state.bn_data.get(tf)
-            if df is not None and not df.empty:
-                bn_info[tf] = f"{len(df)} rows | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M')}"
+        df = st.session_state.bn_data.get("5m")
+        if df is not None and not df.empty:
+            bn_info["5m"] = f"{len(df)} rows | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M')}"
         info_df = pd.DataFrame.from_dict(bn_info, orient="index", columns=["Info"])
         st.dataframe(info_df, use_container_width=True)
 
     if st.session_state.btc_data:
         st.markdown("**BTC**")
         btc_info = {}
-        for tf in ["160m","8h","1d","3d","9d","27d"]:
-            df = st.session_state.btc_data.get(tf)
-            if df is not None and not df.empty:
-                last_ts = df.index[-1]
-                trade_date = (last_ts - pd.Timedelta(hours=5, minutes=30)).date()
-                btc_info[tf] = f"{len(df)} rows | Trade Date: {trade_date} | Last: {last_ts.strftime('%H:%M')}"
+        df = st.session_state.btc_data.get("5m")
+        if df is not None and not df.empty:
+            last_ts = df.index[-1]
+            trade_date = (last_ts - pd.Timedelta(hours=5, minutes=30)).date()
+            btc_info["5m"] = f"{len(df)} rows | Trade Date: {trade_date} | Last: {last_ts.strftime('%H:%M')}"
         info_df2 = pd.DataFrame.from_dict(btc_info, orient="index", columns=["Info"])
         st.dataframe(info_df2, use_container_width=True)
 
