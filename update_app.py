@@ -30,8 +30,8 @@ GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
 GITHUB_REPO      = "krishna123814/Update"
 GITHUB_BRANCH    = "main"
 
-BN_GZ_FILENAME   = "banknifty_all_timeframes_json.gz"
-BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_master_all_timeframes_json.gz"
+BN_GZ_FILENAME   = "banknifty_all_timeframes.json.gz"
+BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_master_all_timeframes.json.gz"
 
 BN_SYMBOL        = "NSE:NIFTYBANK-INDEX"
 BTC_SYMBOL       = "BTCUSDT"
