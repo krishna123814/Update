@@ -7,7 +7,7 @@ Dono .gz files ko fetch, merge, resample karke download karo.
 
 import io
 import gzip
-import pickle
+import json
 import hashlib
 import datetime
 import requests
@@ -97,13 +97,13 @@ for key in ["fyers_token", "bn_data", "btc_data", "bn_updated", "btc_updated"]:
 def gz_to_bytes(data_dict: dict) -> bytes:
     buf = io.BytesIO()
     with gzip.open(buf, "wb") as f:
-        pickle.dump(data_dict, f)
+        f.write(json.dumps(data_dict).encode("utf-8"))
     return buf.getvalue()
 
 
 def bytes_to_dict(raw: bytes) -> dict:
     with gzip.open(io.BytesIO(raw), "rb") as f:
-        return pickle.load(f)
+        return json.loads(f.read().decode("utf-8"))
 
 
 # ══════════════════════════════════════════════════════════════
