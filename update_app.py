@@ -423,13 +423,11 @@ def binance_fetch_candles(
         "open_time","Open","High","Low","Close","Volume",
         "close_time","qav","num_trades","tbbav","tbqav","ignore"
     ])
-    # UTC → IST (+5:30) — sabhi intervals ke liye (10m, 1d, sab)
-    # 1d: Binance UTC 00:00 + 5:30 = IST 05:30 ✅
-    # 10m: UTC open_time + 5:30 = IST time ✅
-    IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+    # Stored BTC file UTC mein hai (meta.timezone = "UTC"), isliye yahan koi IST shift nahi karna —
+    # naive datetime ka clock-value seedha UTC hi represent karta hai.
     df["datetime"] = (
         pd.to_datetime(df["open_time"], unit="ms", utc=True)
-        .dt.tz_localize(None) + IST_OFFSET
+        .dt.tz_localize(None)
     )
     df = df.set_index("datetime")[["Open","High","Low","Close"]].astype(float)
     df = df[~df.index.duplicated(keep="last")].sort_index()
@@ -477,20 +475,19 @@ def update_btc(data: dict) -> dict:
     """
     Sirf 5m BTC data update karo (Binance se). Koi resampling nahi.
     """
-    IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
     now_utc = datetime.datetime.utcnow()
 
     # ── Fetch new 5m data ──
     last_5m = data["5m"].index[-1]
-    # last_5m IST mein hai → UTC mein convert karo Binance ke liye
-    from_dt_utc = last_5m - IST_OFFSET - datetime.timedelta(days=1)
+    # last_5m UTC mein hai (stored format UTC hai), Binance bhi UTC leta hai — koi shift nahi.
+    from_dt_utc = last_5m - datetime.timedelta(days=1)
     st.write(f"  📥 5m fetch: {last_5m.date()} → today")
     new_5m = binance_fetch_candles(
         BTC_SYMBOL, "5m",
         from_dt=from_dt_utc,
         to_dt=now_utc,
     )
-    # binance_fetch_candles IST index return karta hai (UTC+5:30 already applied)
+    # binance_fetch_candles ab UTC index return karta hai (stored data se consistent)
 
     if new_5m.empty:
         st.warning("5m: koi nayi candles nahi mili.")
