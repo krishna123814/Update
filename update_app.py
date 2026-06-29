@@ -108,7 +108,8 @@ def bytes_to_dict(raw: bytes) -> dict:
 
 def parse_bn_json(raw: bytes) -> dict:
     """
-    Format: {"meta": {...}, "data": [ {"ts","o","h","l","c"}, ... ]}
+    Format: {"meta": {...}, "data": [ {"t","o","h","l","c"}, ... ]}
+    "t" = epoch seconds jo IST clock-time represent karta hai (e.g. 9:15 market open).
     Sirf 5m raw candles. Koi resampling nahi.
     """
     obj = bytes_to_dict(raw)
@@ -117,8 +118,12 @@ def parse_bn_json(raw: bytes) -> dict:
         return {}
 
     df = pd.DataFrame(records)
-    df = df.rename(columns={"ts": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
-    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = df.rename(columns={"t": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
+    if "datetime" not in df.columns:
+        st.error(f"BN data: 'datetime' column nahi mila. Actual columns: {list(df.columns)}")
+        st.write("Sample record:", records[0] if records else None)
+        return {}
+    df["datetime"] = pd.to_datetime(df["datetime"], unit="s")
     df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
     df = df[~df.index.duplicated(keep="last")].sort_index()
 
@@ -127,24 +132,22 @@ def parse_bn_json(raw: bytes) -> dict:
 
 def parse_btc_json(raw: bytes) -> dict:
     """
-    Format: [ {"date": "2017-01-01", "candles": [ {"t","o","h","l","c","v"}, ... ]}, ... ]
-    Sirf 5m raw candles (din-wise grouped, yahan flatten kar diya). Koi resampling nahi.
+    Format: {"meta": {...}, "data": [ {"t","o","h","l","c"}, ... ]}
+    "t" = epoch seconds in UTC.
+    Sirf 5m raw candles. Koi resampling nahi.
     """
     obj = bytes_to_dict(raw)
-    if not isinstance(obj, list) or len(obj) == 0:
+    records = obj.get("data", obj)
+    if not isinstance(records, list) or len(records) == 0:
         return {}
 
-    all_candles = []
-    for day_block in obj:
-        candles = day_block.get("candles", [])
-        all_candles.extend(candles)
-
-    if not all_candles:
-        return {}
-
-    df = pd.DataFrame(all_candles)
+    df = pd.DataFrame(records)
     df = df.rename(columns={"t": "datetime", "o": "Open", "h": "High", "l": "Low", "c": "Close"})
-    df["datetime"] = pd.to_datetime(df["datetime"])
+    if "datetime" not in df.columns:
+        st.error(f"BTC data: 'datetime' column nahi mila. Actual columns: {list(df.columns)}")
+        st.write("Sample record:", records[0] if records else None)
+        return {}
+    df["datetime"] = pd.to_datetime(df["datetime"], unit="s")
     df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
     df = df[~df.index.duplicated(keep="last")].sort_index()
 
@@ -152,12 +155,12 @@ def parse_btc_json(raw: bytes) -> dict:
 
 
 def dict_to_bn_json(data: dict) -> dict:
-    """Sirf 5m raw data save karo, naye input format jaisa (meta + flat list)."""
+    """Sirf 5m raw data save karo, GitHub input format jaisa (meta + flat list, t=epoch seconds)."""
     df = data["5m"]
     records = []
     for ts, row in df.iterrows():
         records.append({
-            "ts": ts.strftime("%Y-%m-%d %H:%M"),
+            "t": int(pd.Timestamp(ts).value // 10**9),
             "o": round(float(row["Open"]), 2),
             "h": round(float(row["High"]), 2),
             "l": round(float(row["Low"]), 2),
@@ -167,22 +170,20 @@ def dict_to_bn_json(data: dict) -> dict:
             "data": records}
 
 
-def dict_to_btc_json(data: dict) -> list:
-    """Sirf 5m raw data save karo, naye input format jaisa (date-grouped candles list)."""
+def dict_to_btc_json(data: dict) -> dict:
+    """Sirf 5m raw data save karo, GitHub input format jaisa (meta + flat list, t=epoch seconds UTC)."""
     df = data["5m"]
-    out = []
-    for date, day_df in df.groupby(df.index.date):
-        candles = []
-        for ts, row in day_df.iterrows():
-            candles.append({
-                "t": ts.strftime("%Y-%m-%d %H:%M:%S"),
-                "o": round(float(row["Open"]), 2),
-                "h": round(float(row["High"]), 2),
-                "l": round(float(row["Low"]), 2),
-                "c": round(float(row["Close"]), 2),
-            })
-        out.append({"date": date.strftime("%Y-%m-%d"), "candles": candles})
-    return out
+    records = []
+    for ts, row in df.iterrows():
+        records.append({
+            "t": int(pd.Timestamp(ts).value // 10**9),
+            "o": round(float(row["Open"]), 2),
+            "h": round(float(row["High"]), 2),
+            "l": round(float(row["Low"]), 2),
+            "c": round(float(row["Close"]), 2),
+        })
+    return {"meta": {"instrument": "BTCUSDT", "timezone": "UTC", "timeframe": "5m"},
+            "data": records}
 
 
 
