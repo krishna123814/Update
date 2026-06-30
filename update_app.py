@@ -500,8 +500,87 @@ def update_btc(data: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════
-#  UI — SECTION 1: FYERS AUTH
+#  HELPERS — COMPLETENESS CHECK (find missing/short trading days)
 # ══════════════════════════════════════════════════════════════
+NSE_HOLIDAYS_SET = {
+    "2026-01-26","2026-03-20","2026-04-03","2026-04-14","2026-05-01",
+    "2026-08-15","2026-10-02","2026-11-25","2026-12-25",
+}
+EXPECTED_5M_CANDLES_PER_DAY = 75  # 09:15 → 15:25 IST, every 5 min
+
+def find_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Scan a 5m OHLC DataFrame (IST-naive index) and find every Mon-Fri
+    (non NSE-holiday) date that has fewer than the expected 75 candles
+    (including 0 — fully missing days).
+    Returns a DataFrame: date, weekday, candle_count, status.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["date", "weekday", "candles", "status"])
+
+    counts = df.groupby(df.index.date).size()
+    start, end = df.index.date.min(), df.index.date.max()
+
+    rows = []
+    cur = start
+    one_day = datetime.timedelta(days=1)
+    while cur <= end:
+        wd = cur.weekday()  # 0=Mon ... 6=Sun
+        ds = cur.isoformat()
+        if wd < 5 and ds not in NSE_HOLIDAYS_SET:
+            cnt = int(counts.get(cur, 0))
+            if cnt < EXPECTED_5M_CANDLES_PER_DAY:
+                status = "MISSING (0 candles)" if cnt == 0 else f"INCOMPLETE ({cnt}/{EXPECTED_5M_CANDLES_PER_DAY})"
+                rows.append({
+                    "date": ds,
+                    "weekday": cur.strftime("%A"),
+                    "candles": cnt,
+                    "status": status,
+                })
+        cur += one_day
+
+    return pd.DataFrame(rows)
+
+
+# ══════════════════════════════════════════════════════════════
+#  HELPERS — BACKFILL A SPECIFIC DATE RANGE
+# ══════════════════════════════════════════════════════════════
+def backfill_banknifty_range(
+    data: dict,
+    access_token: str,
+    from_date: datetime.date,
+    to_date: datetime.date,
+) -> dict:
+    """
+    Force-fetch BankNifty 5m candles for an explicit [from_date, to_date]
+    range (inclusive) and merge into existing data — even if that range
+    is in the past and not adjacent to the last stored candle.
+    Use this to backfill a day that the daily update silently skipped.
+    """
+    from_dt = datetime.datetime.combine(from_date, datetime.time(0, 0))
+    to_dt   = datetime.datetime.combine(to_date + datetime.timedelta(days=1), datetime.time(0, 0))
+
+    new_5m = fyers_fetch_candles(access_token, BN_SYMBOL, 5, from_dt=from_dt, to_dt=to_dt)
+    if new_5m.empty:
+        st.error(f"Fyers ne {from_date} → {to_date} ke liye koi candle nahi diya. "
+                 f"Ho sakta hai ye date range Fyers ke paas bhi available na ho (bahut purana / future date).")
+        return data
+
+    new_5m = new_5m[
+        (new_5m.index.time >= datetime.time(9, 15)) &
+        (new_5m.index.time <= datetime.time(15, 30))
+    ]
+
+    before = len(data["5m"]) if data and "5m" in data else 0
+    combined = pd.concat([data["5m"], new_5m]) if data and "5m" in data and not data["5m"].empty else new_5m
+    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    data["5m"] = combined
+    after = len(combined)
+    st.success(f"✅ Backfill done: {after - before} naye candles add hue ({from_date} → {to_date} range se).")
+    return data
+
+
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🔐 Fyers Login (BankNifty ke liye)</div>', unsafe_allow_html=True)
 
@@ -625,6 +704,58 @@ with col4:
 
     if st.session_state.btc_data is None:
         st.caption("⚠ Pehle BTC load karo")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+#  UI — SECTION 3.5: COMPLETENESS CHECK + BACKFILL MISSING DAY
+# ══════════════════════════════════════════════════════════════
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🩹 Missing / Incomplete Days</div>', unsafe_allow_html=True)
+
+if st.session_state.bn_data and st.session_state.bn_data.get("5m") is not None:
+    bn_df_check = st.session_state.bn_data["5m"]
+
+    if st.button("🔍 Check for missing days", key="check_missing_btn"):
+        with st.spinner("Scanning..."):
+            report = find_incomplete_days(bn_df_check)
+        st.session_state["_missing_report"] = report
+
+    report = st.session_state.get("_missing_report")
+    if report is not None:
+        if report.empty:
+            st.markdown('<span class="badge-green">✓ Koi missing/incomplete trading day nahi mila</span>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<span class="badge-red">{len(report)} problem day(s) mile</span>', unsafe_allow_html=True)
+            st.dataframe(report, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.caption("Upar list mein jo date dikhi (ya koi bhi specific date), uska data force-fetch karke yahan se backfill karo:")
+
+    bf_col1, bf_col2, bf_col3 = st.columns([1, 1, 1])
+    with bf_col1:
+        bf_from = st.date_input("From date", key="backfill_from")
+    with bf_col2:
+        bf_to = st.date_input("To date", key="backfill_to")
+    with bf_col3:
+        st.write("")
+        st.write("")
+        bf_ready = st.session_state.fyers_token is not None
+        if st.button("🩹 Backfill", use_container_width=True, disabled=not bf_ready):
+            with st.spinner(f"{bf_from} → {bf_to} fetch ho raha hai..."):
+                updated = backfill_banknifty_range(
+                    st.session_state.bn_data,
+                    st.session_state.fyers_token,
+                    bf_from, bf_to,
+                )
+            st.session_state.bn_data    = updated
+            st.session_state.bn_updated = True
+            st.session_state.pop("_missing_report", None)  # stale ho gaya, re-check karna padega
+    if not bf_ready:
+        st.caption("⚠ Fyers login zaroori hai backfill ke liye")
+else:
+    st.caption("Pehle upar se BankNifty data Load karo, fir yahan missing-day check kar sakte ho.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
