@@ -409,7 +409,12 @@ def binance_fetch_candles(
         try:
             r = requests.get(BINANCE_BASE, params=params, timeout=20)
             rows = r.json()
-            if not rows or isinstance(rows, dict):
+            if not rows:
+                break
+            if isinstance(rows, dict):
+                # Binance ne error diya (geo-block / rate-limit / bad params) —
+                # chup mat karo, dikhao
+                st.warning(f"Binance error response: {rows}  (HTTP {r.status_code})")
                 break
             all_rows.extend(rows)
             # Last candle's close time + 1ms
