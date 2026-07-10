@@ -27,11 +27,11 @@ FYERS_PASSWORD   = "2552"
 FYERS_REDIRECT   = "https://www.google.com"
 
 GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
-GITHUB_REPO      = "krishna123814/Update"
+GITHUB_REPO      = "krishna123814/My-engine"
 GITHUB_BRANCH    = "main"
 
-BN_GZ_FILENAME   = "banknifty_5m_csv.json.gz"
-BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_IST_5m.json.gz"
+BN_GZ_FILENAME   = "banknifty_5m_csv_json.gz"
+BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_IST_5m_json.gz"
 
 BN_SYMBOL        = "NSE:NIFTYBANK-INDEX"
 BTC_SYMBOL       = "BTCUSDT"
@@ -110,7 +110,7 @@ def parse_bn_json(raw: bytes) -> dict:
     """
     Format: {"meta": {...}, "data": [ {"t","o","h","l","c"}, ... ]}
     "t" = epoch seconds jo IST clock-time represent karta hai (e.g. 9:15 market open).
-    Sirf 5m raw candles. Koi resampling nahi.
+    Sirf 1m raw candles. Koi resampling nahi.
     """
     obj = bytes_to_dict(raw)
     records = obj.get("data", obj)
@@ -127,7 +127,7 @@ def parse_bn_json(raw: bytes) -> dict:
     df = df.set_index("datetime")[["Open", "High", "Low", "Close"]]
     df = df[~df.index.duplicated(keep="last")].sort_index()
 
-    return {"5m": df}
+    return {"1m": df}
 
 
 def parse_btc_json(raw: bytes) -> dict:
@@ -155,8 +155,8 @@ def parse_btc_json(raw: bytes) -> dict:
 
 
 def dict_to_bn_json(data: dict) -> dict:
-    """Sirf 5m raw data save karo, GitHub input format jaisa (meta + flat list, t=epoch seconds)."""
-    df = data["5m"]
+    """Sirf 1m raw data save karo, GitHub input format jaisa (meta + flat list, t=epoch seconds)."""
+    df = data["1m"]
     records = []
     for ts, row in df.iterrows():
         records.append({
@@ -166,7 +166,7 @@ def dict_to_bn_json(data: dict) -> dict:
             "l": round(float(row["Low"]), 2),
             "c": round(float(row["Close"]), 2),
         })
-    return {"meta": {"instrument": "Banknifty", "timezone": "IST", "timeframe": "5m"},
+    return {"meta": {"instrument": "Banknifty", "timezone": "IST", "timeframe": "1m"},
             "data": records}
 
 
@@ -313,6 +313,7 @@ def fyers_auth_url() -> str:
 #  FYERS DATA FETCH — with pagination
 # ══════════════════════════════════════════════════════════════
 FYERS_TF_MAP = {
+    "1m":   1,
     "5m":   5,
     "15m":  15,
     "45m":  45,
@@ -439,31 +440,33 @@ def binance_fetch_candles(
 # ══════════════════════════════════════════════════════════════
 def update_banknifty(data: dict, access_token: str) -> dict:
     """
-    Sirf 5m BankNifty data update karo (Fyers se). Koi resampling nahi.
+    Sirf 1m BankNifty data update karo (Fyers se). Koi resampling nahi.
+    Last stored candle se lekar "abhi tak" jo bhi gap hai (jaise missing
+    2.5 mahine ka data), wo yahin se automatically fetch ho jaata hai.
     """
     now_ist = datetime.datetime.now(IST).replace(tzinfo=None)
 
-    # ── Fetch new 5m data ──
-    last_5m = data["5m"].index[-1]
-    st.write(f"  📥 5m fetch: {last_5m.date()} → today")
-    new_5m = fyers_fetch_candles(
-        access_token, BN_SYMBOL, 5,
-        from_dt=last_5m - datetime.timedelta(days=1),
+    # ── Fetch new 1m data ──
+    last_1m = data["1m"].index[-1]
+    st.write(f"  📥 1m fetch: {last_1m.date()} → today")
+    new_1m = fyers_fetch_candles(
+        access_token, BN_SYMBOL, 1,
+        from_dt=last_1m - datetime.timedelta(days=1),
         to_dt=now_ist,
     )
 
-    if new_5m.empty:
-        st.warning("5m: koi nayi candles nahi mili.")
+    if new_1m.empty:
+        st.warning("1m: koi nayi candles nahi mili.")
         return data
 
     # Market hours filter (9:15 – 15:30 IST)
-    new_5m = new_5m[
-        (new_5m.index.time >= datetime.time(9, 15)) &
-        (new_5m.index.time <= datetime.time(15, 30))
+    new_1m = new_1m[
+        (new_1m.index.time >= datetime.time(9, 15)) &
+        (new_1m.index.time <= datetime.time(15, 30))
     ]
 
-    data["5m"] = merge_df(data["5m"], new_5m)
-    st.write(f"  ✅ 5m updated → {len(data['5m'])} rows")
+    data["1m"] = merge_df(data["1m"], new_1m)
+    st.write(f"  ✅ 1m updated → {len(data['1m'])} rows")
 
     return data
 
@@ -506,12 +509,12 @@ NSE_HOLIDAYS_SET = {
     "2026-01-26","2026-03-03","2026-03-26","2026-03-31","2026-04-03","2026-04-14","2026-05-01",
     "2026-05-28","2026-06-26","2026-08-15","2026-10-02","2026-11-25","2026-12-25",
 }
-EXPECTED_5M_CANDLES_PER_DAY = 75  # 09:15 → 15:25 IST, every 5 min
+EXPECTED_1M_CANDLES_PER_DAY = 375  # 09:15 → 15:29 IST, every 1 min
 
 def find_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Scan a 5m OHLC DataFrame (IST-naive index) and find every Mon-Fri
-    (non NSE-holiday) date that has fewer than the expected 75 candles
+    Scan a 1m OHLC DataFrame (IST-naive index) and find every Mon-Fri
+    (non NSE-holiday) date that has fewer than the expected 375 candles
     (including 0 — fully missing days).
     Returns a DataFrame: date, weekday, candle_count, status.
     """
@@ -529,8 +532,8 @@ def find_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
         ds = cur.isoformat()
         if wd < 5 and ds not in NSE_HOLIDAYS_SET:
             cnt = int(counts.get(cur, 0))
-            if cnt < EXPECTED_5M_CANDLES_PER_DAY:
-                status = "MISSING (0 candles)" if cnt == 0 else f"INCOMPLETE ({cnt}/{EXPECTED_5M_CANDLES_PER_DAY})"
+            if cnt < EXPECTED_1M_CANDLES_PER_DAY:
+                status = "MISSING (0 candles)" if cnt == 0 else f"INCOMPLETE ({cnt}/{EXPECTED_1M_CANDLES_PER_DAY})"
                 rows.append({
                     "date": ds,
                     "weekday": cur.strftime("%A"),
@@ -552,7 +555,7 @@ def backfill_banknifty_range(
     to_date: datetime.date,
 ) -> dict:
     """
-    Force-fetch BankNifty 5m candles for an explicit [from_date, to_date]
+    Force-fetch BankNifty 1m candles for an explicit [from_date, to_date]
     range (inclusive) and merge into existing data — even if that range
     is in the past and not adjacent to the last stored candle.
     Use this to backfill a day that the daily update silently skipped.
@@ -560,21 +563,21 @@ def backfill_banknifty_range(
     from_dt = datetime.datetime.combine(from_date, datetime.time(0, 0))
     to_dt   = datetime.datetime.combine(to_date + datetime.timedelta(days=1), datetime.time(0, 0))
 
-    new_5m = fyers_fetch_candles(access_token, BN_SYMBOL, 5, from_dt=from_dt, to_dt=to_dt)
-    if new_5m.empty:
+    new_1m = fyers_fetch_candles(access_token, BN_SYMBOL, 1, from_dt=from_dt, to_dt=to_dt)
+    if new_1m.empty:
         st.error(f"Fyers ne {from_date} → {to_date} ke liye koi candle nahi diya. "
                  f"Ho sakta hai ye date range Fyers ke paas bhi available na ho (bahut purana / future date).")
         return data
 
-    new_5m = new_5m[
-        (new_5m.index.time >= datetime.time(9, 15)) &
-        (new_5m.index.time <= datetime.time(15, 30))
+    new_1m = new_1m[
+        (new_1m.index.time >= datetime.time(9, 15)) &
+        (new_1m.index.time <= datetime.time(15, 30))
     ]
 
-    before = len(data["5m"]) if data and "5m" in data else 0
-    combined = pd.concat([data["5m"], new_5m]) if data and "5m" in data and not data["5m"].empty else new_5m
+    before = len(data["1m"]) if data and "1m" in data else 0
+    combined = pd.concat([data["1m"], new_1m]) if data and "1m" in data and not data["1m"].empty else new_1m
     combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-    data["5m"] = combined
+    data["1m"] = combined
     after = len(combined)
     st.success(f"✅ Backfill done: {after - before} naye candles add hue ({from_date} → {to_date} range se).")
     return data
@@ -630,9 +633,9 @@ with col1:
         if raw:
             st.session_state.bn_data = parse_bn_json(raw)
             st.session_state.bn_updated = False
-            bn_last = st.session_state.bn_data.get("5m", pd.DataFrame())
+            bn_last = st.session_state.bn_data.get("1m", pd.DataFrame())
             last_dt = bn_last.index[-1] if not bn_last.empty else "?"
-            st.success(f"✅ Loaded! Last 5m candle: {last_dt}")
+            st.success(f"✅ Loaded! Last 1m candle: {last_dt}")
         else:
             st.error("Download fail hua.")
 
@@ -714,8 +717,8 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🩹 Missing / Incomplete Days</div>', unsafe_allow_html=True)
 
-if st.session_state.bn_data and st.session_state.bn_data.get("5m") is not None:
-    bn_df_check = st.session_state.bn_data["5m"]
+if st.session_state.bn_data and st.session_state.bn_data.get("1m") is not None:
+    bn_df_check = st.session_state.bn_data["1m"]
 
     if st.button("🔍 Check for missing days", key="check_missing_btn"):
         with st.spinner("Scanning..."):
@@ -770,9 +773,9 @@ if st.session_state.bn_data or st.session_state.btc_data:
     if st.session_state.bn_data:
         st.markdown("**BankNifty**")
         bn_info = {}
-        df = st.session_state.bn_data.get("5m")
+        df = st.session_state.bn_data.get("1m")
         if df is not None and not df.empty:
-            bn_info["5m"] = f"{len(df)} rows | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M')}"
+            bn_info["1m"] = f"{len(df)} rows | Last: {df.index[-1].strftime('%Y-%m-%d %H:%M')}"
         info_df = pd.DataFrame.from_dict(bn_info, orient="index", columns=["Info"])
         st.dataframe(info_df, use_container_width=True)
 
