@@ -27,7 +27,7 @@ FYERS_PASSWORD   = "2552"
 FYERS_REDIRECT   = "https://www.google.com"
 
 GITHUB_TOKEN     = st.secrets["GITHUB_TOKEN"]
-GITHUB_REPO      = "krishna123814/My-engine"
+GITHUB_REPO      = "krishna123814/Update"
 GITHUB_BRANCH    = "main"
 
 BN_GZ_FILENAME   = "banknifty_5m_csv_json.gz"
@@ -680,7 +680,6 @@ with col3:
                 st.session_state.bn_data    = updated
                 st.session_state.bn_updated = True
                 st.success("✅ BankNifty update complete!")
-                st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -703,7 +702,6 @@ with col4:
                 st.session_state.btc_data    = updated
                 st.session_state.btc_updated = True
                 st.success("✅ BTC update complete!")
-                st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
