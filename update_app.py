@@ -510,6 +510,7 @@ NSE_HOLIDAYS_SET = {
     "2026-05-28","2026-06-26","2026-08-15","2026-10-02","2026-11-25","2026-12-25",
 }
 EXPECTED_1M_CANDLES_PER_DAY = 375  # 09:15 → 15:29 IST, every 1 min
+EXPECTED_5M_CANDLES_PER_DAY_BTC = 288  # 24h / 5min, crypto trades non-stop
 
 def find_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -540,6 +541,36 @@ def find_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
                     "candles": cnt,
                     "status": status,
                 })
+        cur += one_day
+
+    return pd.DataFrame(rows)
+
+
+def find_incomplete_days_btc(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Scan a 5m BTC OHLC DataFrame (UTC-naive index) and find every calendar
+    date that has fewer than the expected 288 candles (24h non-stop crypto).
+    Returns a DataFrame: date, weekday, candles, status.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["date", "weekday", "candles", "status"])
+
+    counts = df.groupby(df.index.date).size()
+    start, end = df.index.date.min(), df.index.date.max()
+
+    rows = []
+    cur = start
+    one_day = datetime.timedelta(days=1)
+    while cur <= end:
+        cnt = int(counts.get(cur, 0))
+        if cnt < EXPECTED_5M_CANDLES_PER_DAY_BTC:
+            status = "MISSING (0 candles)" if cnt == 0 else f"INCOMPLETE ({cnt}/{EXPECTED_5M_CANDLES_PER_DAY_BTC})"
+            rows.append({
+                "date": cur.isoformat(),
+                "weekday": cur.strftime("%A"),
+                "candles": cnt,
+                "status": status,
+            })
         cur += one_day
 
     return pd.DataFrame(rows)
@@ -581,6 +612,83 @@ def backfill_banknifty_range(
     after = len(combined)
     st.success(f"✅ Backfill done: {after - before} naye candles add hue ({from_date} → {to_date} range se).")
     return data
+
+
+def backfill_btc_range(
+    data: dict,
+    from_date: datetime.date,
+    to_date: datetime.date,
+) -> dict:
+    """
+    Force-fetch BTC 5m candles for an explicit [from_date, to_date]
+    range (inclusive, UTC) and merge into existing data.
+    """
+    from_dt = datetime.datetime.combine(from_date, datetime.time(0, 0))
+    to_dt   = datetime.datetime.combine(to_date + datetime.timedelta(days=1), datetime.time(0, 0))
+
+    new_5m = binance_fetch_candles(BTC_SYMBOL, "5m", from_dt=from_dt, to_dt=to_dt)
+    if new_5m.empty:
+        st.error(f"Binance ne {from_date} → {to_date} ke liye koi candle nahi diya.")
+        return data
+
+    before = len(data["5m"]) if data and "5m" in data else 0
+    combined = pd.concat([data["5m"], new_5m]) if data and "5m" in data and not data["5m"].empty else new_5m
+    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    data["5m"] = combined
+    after = len(combined)
+    st.success(f"✅ Backfill done: {after - before} naye candles add hue ({from_date} → {to_date} range se).")
+    return data
+
+
+# ══════════════════════════════════════════════════════════════
+#  HELPERS — AUTO BACKFILL ALL MISSING DAYS (ek click mein sab)
+# ══════════════════════════════════════════════════════════════
+def group_missing_dates(date_strs: list, max_gap_days: int = 4) -> list:
+    """
+    Missing-report ki date list ko contiguous ranges mein group karo,
+    taaki har chhota gap (weekend/holiday) alag API call na bane —
+    scattered missing days bhi ek hi call mein cover ho jayein agar
+    paas-paas hain (max_gap_days ke andar).
+    """
+    if not date_strs:
+        return []
+    dates = sorted(datetime.date.fromisoformat(d) for d in date_strs)
+    groups = []
+    start = prev = dates[0]
+    for d in dates[1:]:
+        if (d - prev).days <= max_gap_days:
+            prev = d
+        else:
+            groups.append((start, prev))
+            start = prev = d
+    groups.append((start, prev))
+    return groups
+
+
+def auto_backfill_all_bn(data: dict, access_token: str, report: pd.DataFrame):
+    """Report ke saare missing/incomplete din ek click mein backfill karo."""
+    if report is None or report.empty:
+        return data, 0
+    groups = group_missing_dates(report["date"].tolist())
+    before = len(data["1m"])
+    for i, (gfrom, gto) in enumerate(groups, 1):
+        st.write(f"  🩹 Group {i}/{len(groups)}: {gfrom} → {gto}")
+        data = backfill_banknifty_range(data, access_token, gfrom, gto)
+    after = len(data["1m"])
+    return data, after - before
+
+
+def auto_backfill_all_btc(data: dict, report: pd.DataFrame):
+    """Report ke saare missing/incomplete din ek click mein backfill karo."""
+    if report is None or report.empty:
+        return data, 0
+    groups = group_missing_dates(report["date"].tolist())
+    before = len(data["5m"])
+    for i, (gfrom, gto) in enumerate(groups, 1):
+        st.write(f"  🩹 Group {i}/{len(groups)}: {gfrom} → {gto}")
+        data = backfill_btc_range(data, gfrom, gto)
+    after = len(data["5m"])
+    return data, after - before
 
 
 
@@ -733,32 +841,108 @@ if st.session_state.bn_data and st.session_state.bn_data.get("1m") is not None:
             st.markdown(f'<span class="badge-red">{len(report)} problem day(s) mile</span>', unsafe_allow_html=True)
             st.dataframe(report, use_container_width=True, hide_index=True)
 
-    st.divider()
-    st.caption("Upar list mein jo date dikhi (ya koi bhi specific date), uska data force-fetch karke yahan se backfill karo:")
+            bn_bf_ready = st.session_state.fyers_token is not None
+            if st.button("🩹⚡ Auto-Backfill ALL Missing Days (BankNifty)", use_container_width=True,
+                         disabled=not bn_bf_ready, key="auto_backfill_bn_btn"):
+                with st.spinner(f"{len(report)} din backfill ho rahe hain..."):
+                    updated, added = auto_backfill_all_bn(
+                        st.session_state.bn_data,
+                        st.session_state.fyers_token,
+                        report,
+                    )
+                st.session_state.bn_data    = updated
+                st.session_state.bn_updated = True
+                st.session_state.pop("_missing_report", None)  # stale ho gaya, re-check karna padega
+                st.success(f"✅ Auto-backfill complete! {added} naye candles add hue.")
+                st.rerun()
+            if not bn_bf_ready:
+                st.caption("⚠ Fyers login zaroori hai backfill ke liye")
 
-    bf_col1, bf_col2, bf_col3 = st.columns([1, 1, 1])
-    with bf_col1:
-        bf_from = st.date_input("From date", key="backfill_from")
-    with bf_col2:
-        bf_to = st.date_input("To date", key="backfill_to")
-    with bf_col3:
-        st.write("")
-        st.write("")
-        bf_ready = st.session_state.fyers_token is not None
-        if st.button("🩹 Backfill", use_container_width=True, disabled=not bf_ready):
-            with st.spinner(f"{bf_from} → {bf_to} fetch ho raha hai..."):
-                updated = backfill_banknifty_range(
-                    st.session_state.bn_data,
-                    st.session_state.fyers_token,
-                    bf_from, bf_to,
-                )
-            st.session_state.bn_data    = updated
-            st.session_state.bn_updated = True
-            st.session_state.pop("_missing_report", None)  # stale ho gaya, re-check karna padega
-    if not bf_ready:
-        st.caption("⚠ Fyers login zaroori hai backfill ke liye")
+    st.divider()
+    with st.expander("Ya koi ek specific date range manually backfill karo"):
+        bf_col1, bf_col2, bf_col3 = st.columns([1, 1, 1])
+        with bf_col1:
+            bf_from = st.date_input("From date", key="backfill_from")
+        with bf_col2:
+            bf_to = st.date_input("To date", key="backfill_to")
+        with bf_col3:
+            st.write("")
+            st.write("")
+            bf_ready = st.session_state.fyers_token is not None
+            if st.button("🩹 Backfill", use_container_width=True, disabled=not bf_ready):
+                with st.spinner(f"{bf_from} → {bf_to} fetch ho raha hai..."):
+                    updated = backfill_banknifty_range(
+                        st.session_state.bn_data,
+                        st.session_state.fyers_token,
+                        bf_from, bf_to,
+                    )
+                st.session_state.bn_data    = updated
+                st.session_state.bn_updated = True
+                st.session_state.pop("_missing_report", None)
+        if not bf_ready:
+            st.caption("⚠ Fyers login zaroori hai backfill ke liye")
 else:
     st.caption("Pehle upar se BankNifty data Load karo, fir yahan missing-day check kar sakte ho.")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+#  UI — SECTION 3.6: BTC COMPLETENESS CHECK + AUTO-BACKFILL
+# ══════════════════════════════════════════════════════════════
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🩹 Missing / Incomplete Days (BTC)</div>', unsafe_allow_html=True)
+
+if st.session_state.btc_data and st.session_state.btc_data.get("5m") is not None:
+    btc_df_check = st.session_state.btc_data["5m"]
+
+    if st.button("🔍 Check for missing days", key="check_missing_btc_btn"):
+        with st.spinner("Scanning..."):
+            btc_report = find_incomplete_days_btc(btc_df_check)
+        st.session_state["_missing_report_btc"] = btc_report
+
+    btc_report = st.session_state.get("_missing_report_btc")
+    if btc_report is not None:
+        if btc_report.empty:
+            st.markdown('<span class="badge-green">✓ Koi missing/incomplete din nahi mila</span>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<span class="badge-red">{len(btc_report)} problem day(s) mile</span>', unsafe_allow_html=True)
+            st.dataframe(btc_report, use_container_width=True, hide_index=True)
+
+            if st.button("🩹⚡ Auto-Backfill ALL Missing Days (BTC)", use_container_width=True,
+                         key="auto_backfill_btc_btn"):
+                with st.spinner(f"{len(btc_report)} din backfill ho rahe hain..."):
+                    updated, added = auto_backfill_all_btc(
+                        st.session_state.btc_data,
+                        btc_report,
+                    )
+                st.session_state.btc_data    = updated
+                st.session_state.btc_updated = True
+                st.session_state.pop("_missing_report_btc", None)
+                st.success(f"✅ Auto-backfill complete! {added} naye candles add hue.")
+                st.rerun()
+
+    st.divider()
+    with st.expander("Ya koi ek specific date range manually backfill karo"):
+        bfb_col1, bfb_col2, bfb_col3 = st.columns([1, 1, 1])
+        with bfb_col1:
+            bfb_from = st.date_input("From date", key="backfill_from_btc")
+        with bfb_col2:
+            bfb_to = st.date_input("To date", key="backfill_to_btc")
+        with bfb_col3:
+            st.write("")
+            st.write("")
+            if st.button("🩹 Backfill", use_container_width=True, key="backfill_btc_manual_btn"):
+                with st.spinner(f"{bfb_from} → {bfb_to} fetch ho raha hai..."):
+                    updated = backfill_btc_range(
+                        st.session_state.btc_data,
+                        bfb_from, bfb_to,
+                    )
+                st.session_state.btc_data    = updated
+                st.session_state.btc_updated = True
+                st.session_state.pop("_missing_report_btc", None)
+else:
+    st.caption("Pehle upar se BTC data Load karo, fir yahan missing-day check kar sakte ho.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
