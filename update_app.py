@@ -357,6 +357,10 @@ def fyers_fetch_candles(
             candles = r.get("candles", [])
             if candles:
                 all_rows.extend(candles)
+            elif r.get("s") != "ok":
+                # Fyers ne error diya (e.g. rate limit, invalid range, no data) —
+                # ise chup mat karo, real reason dikhao
+                st.warning(f"Fyers response ({cur_from.date()} – {cur_to.date()}): {r}")
         except Exception as e:
             st.warning(f"Fyers chunk error ({cur_from.date()} – {cur_to.date()}): {e}")
 
