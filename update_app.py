@@ -35,7 +35,7 @@ BTC_GZ_FILENAME  = "Bitcoin_BTCUSDT_IST_5m.json.gz"
 
 BN_SYMBOL        = "NSE:NIFTYBANK-INDEX"
 BTC_SYMBOL       = "BTCUSDT"
-BINANCE_BASE     = "https://api.binance.com/api/v3/klines"
+BINANCE_BASE     = "https://data-api.binance.vision/api/v3/klines"
 
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
