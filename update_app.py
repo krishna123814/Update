@@ -797,6 +797,7 @@ with col3:
                 st.session_state.bn_data    = updated
                 st.session_state.bn_updated = True
                 st.success("✅ BankNifty update complete!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -819,6 +820,7 @@ with col4:
                 st.session_state.btc_data    = updated
                 st.session_state.btc_updated = True
                 st.success("✅ BTC update complete!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
