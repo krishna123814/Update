@@ -996,7 +996,8 @@ st.caption("Download karo → GitHub pe manually upload karo")
 col5, col6 = st.columns(2)
 
 with col5:
-    if st.session_state.bn_data and st.session_state.bn_updated:
+    bn_ready = bool(st.session_state.bn_data and st.session_state.bn_updated)
+    if bn_ready:
         bn_bytes = gz_to_bytes(dict_to_bn_json(st.session_state.bn_data))
         st.download_button(
             label=f"⬇️ {BN_GZ_FILENAME}",
@@ -1004,16 +1005,24 @@ with col5:
             file_name=BN_GZ_FILENAME,
             mime="application/gzip",
             use_container_width=True,
+            key="bn_download_btn",
         )
         size_kb = len(bn_bytes) / 1024
         st.caption(f"Size: {size_kb:.1f} KB")
-    elif st.session_state.bn_data and not st.session_state.bn_updated:
-        st.markdown('<span class="badge-orange">Update karo pehle</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="badge-red">Load nahi hua</span>', unsafe_allow_html=True)
+        if st.button(f"⬇️ {BN_GZ_FILENAME}", use_container_width=True, key="bn_download_blocked_btn"):
+            if not st.session_state.bn_data:
+                st.warning("⚠ Pehle BankNifty data Load karo")
+            else:
+                st.warning("⚠ Pehle Update karo")
+        if st.session_state.bn_data and not st.session_state.bn_updated:
+            st.markdown('<span class="badge-orange">Update karo pehle</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="badge-red">Load nahi hua</span>', unsafe_allow_html=True)
 
 with col6:
-    if st.session_state.btc_data and st.session_state.btc_updated:
+    btc_ready = bool(st.session_state.btc_data and st.session_state.btc_updated)
+    if btc_ready:
         btc_bytes = gz_to_bytes(dict_to_btc_json(st.session_state.btc_data))
         st.download_button(
             label=f"⬇️ {BTC_GZ_FILENAME}",
@@ -1021,13 +1030,20 @@ with col6:
             file_name=BTC_GZ_FILENAME,
             mime="application/gzip",
             use_container_width=True,
+            key="btc_download_btn",
         )
         size_kb = len(btc_bytes) / 1024
         st.caption(f"Size: {size_kb:.1f} KB")
-    elif st.session_state.btc_data and not st.session_state.btc_updated:
-        st.markdown('<span class="badge-orange">Update karo pehle</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="badge-red">Load nahi hua</span>', unsafe_allow_html=True)
+        if st.button(f"⬇️ {BTC_GZ_FILENAME}", use_container_width=True, key="btc_download_blocked_btn"):
+            if not st.session_state.btc_data:
+                st.warning("⚠ Pehle BTC data Load karo")
+            else:
+                st.warning("⚠ Pehle Update karo")
+        if st.session_state.btc_data and not st.session_state.btc_updated:
+            st.markdown('<span class="badge-orange">Update karo pehle</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="badge-red">Load nahi hua</span>', unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
