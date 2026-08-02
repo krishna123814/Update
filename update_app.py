@@ -86,7 +86,8 @@ st.divider()
 # ══════════════════════════════════════════════════════════════
 #  SESSION STATE
 # ══════════════════════════════════════════════════════════════
-for key in ["fyers_token", "bn_data", "btc_data", "bn_updated", "btc_updated"]:
+for key in ["fyers_token", "bn_data", "btc_data", "bn_updated", "btc_updated",
+            "bn_update_error", "btc_update_error"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -796,15 +797,20 @@ with col3:
                 )
                 st.session_state.bn_data    = updated
                 st.session_state.bn_updated = True
+                st.session_state.bn_update_error = None
                 st.success("✅ BankNifty update complete!")
                 st.rerun()
             except Exception as e:
+                import traceback
+                st.session_state.bn_update_error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
                 st.error(f"Error: {e}")
 
     if not st.session_state.fyers_token:
         st.caption("⚠ Fyers login zaroori hai")
     elif st.session_state.bn_data is None:
         st.caption("⚠ Pehle BankNifty load karo")
+    if st.session_state.get("bn_update_error"):
+        st.error(f"⚠ Pichla update fail hua tha: {st.session_state.bn_update_error.splitlines()[0]}")
 
 with col4:
     btc_ready = st.session_state.btc_data is not None
@@ -819,13 +825,18 @@ with col4:
                 updated = update_btc(st.session_state.btc_data)
                 st.session_state.btc_data    = updated
                 st.session_state.btc_updated = True
+                st.session_state.btc_update_error = None
                 st.success("✅ BTC update complete!")
                 st.rerun()
             except Exception as e:
+                import traceback
+                st.session_state.btc_update_error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
                 st.error(f"Error: {e}")
 
     if st.session_state.btc_data is None:
         st.caption("⚠ Pehle BTC load karo")
+    if st.session_state.get("btc_update_error"):
+        st.error(f"⚠ Pichla update fail hua tha: {st.session_state.btc_update_error.splitlines()[0]}")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1051,6 +1062,9 @@ st.divider()
 with st.expander("🐞 Debug Info (yahan dekho file update hui ya nahi)"):
     st.markdown("**BankNifty**")
     st.write(f"`bn_updated` flag: `{st.session_state.bn_updated}`")
+    if st.session_state.get("bn_update_error"):
+        st.markdown("❌ **Last update error (full traceback):**")
+        st.code(st.session_state.bn_update_error)
     if st.session_state.bn_data and st.session_state.bn_data.get("1m") is not None:
         bn_df_dbg = st.session_state.bn_data["1m"]
         st.write(f"Session me abhi: {len(bn_df_dbg)} rows | Last candle: {bn_df_dbg.index[-1]}")
@@ -1084,6 +1098,9 @@ with st.expander("🐞 Debug Info (yahan dekho file update hui ya nahi)"):
     st.divider()
     st.markdown("**BTC**")
     st.write(f"`btc_updated` flag: `{st.session_state.btc_updated}`")
+    if st.session_state.get("btc_update_error"):
+        st.markdown("❌ **Last update error (full traceback):**")
+        st.code(st.session_state.btc_update_error)
     if st.session_state.btc_data and st.session_state.btc_data.get("5m") is not None:
         btc_df_dbg = st.session_state.btc_data["5m"]
         st.write(f"Session me abhi: {len(btc_df_dbg)} rows | Last candle: {btc_df_dbg.index[-1]}")
