@@ -1047,6 +1047,74 @@ with col6:
         else:
             st.markdown('<span class="badge-red">Load nahi hua</span>', unsafe_allow_html=True)
 
+st.divider()
+with st.expander("🐞 Debug Info (yahan dekho file update hui ya nahi)"):
+    st.markdown("**BankNifty**")
+    st.write(f"`bn_updated` flag: `{st.session_state.bn_updated}`")
+    if st.session_state.bn_data and st.session_state.bn_data.get("1m") is not None:
+        bn_df_dbg = st.session_state.bn_data["1m"]
+        st.write(f"Session me abhi: {len(bn_df_dbg)} rows | Last candle: {bn_df_dbg.index[-1]}")
+        try:
+            _bn_bytes_dbg = gz_to_bytes(dict_to_bn_json(st.session_state.bn_data))
+            _bn_hash = hashlib.md5(_bn_bytes_dbg).hexdigest()[:10]
+            _bn_records = bytes_to_dict(_bn_bytes_dbg).get("data", [])
+            last_epoch = _bn_records[-1]["t"] if _bn_records else None
+            last_dt = datetime.datetime.utcfromtimestamp(last_epoch) if last_epoch else "?"
+            st.write(f"Ab download honi wali file: {len(_bn_records)} rows | Last candle: {last_dt} | "
+                     f"Size: {len(_bn_bytes_dbg)/1024:.1f} KB | MD5: `{_bn_hash}`")
+        except Exception as e:
+            st.error(f"⚠ File generate karte waqt error: {e}")
+    else:
+        st.write("Session me BankNifty data hi nahi hai.")
+
+    if st.button("🔍 GitHub par abhi jo file hai wo check karo", key="debug_check_github_bn"):
+        with st.spinner("GitHub se fetch ho raha hai..."):
+            gh_raw = github_download(BN_GZ_FILENAME)
+        if gh_raw:
+            gh_hash = hashlib.md5(gh_raw).hexdigest()[:10]
+            gh_records = bytes_to_dict(gh_raw).get("data", [])
+            gh_last = gh_records[-1]["t"] if gh_records else None
+            gh_last_dt = datetime.datetime.fromtimestamp(gh_last) if gh_last else "?"
+            st.info(f"GitHub par abhi: {len(gh_records)} rows | Last candle: {gh_last_dt} | MD5: `{gh_hash}`")
+            st.caption("Agar ye 'Ab download honi wali file' se match nahi karta, to matlab GitHub abhi purana hai — "
+                        "download karke wahan manually upload karna baaki hai.")
+        else:
+            st.error("GitHub se file fetch nahi ho payi.")
+
+    st.divider()
+    st.markdown("**BTC**")
+    st.write(f"`btc_updated` flag: `{st.session_state.btc_updated}`")
+    if st.session_state.btc_data and st.session_state.btc_data.get("5m") is not None:
+        btc_df_dbg = st.session_state.btc_data["5m"]
+        st.write(f"Session me abhi: {len(btc_df_dbg)} rows | Last candle: {btc_df_dbg.index[-1]}")
+        try:
+            _btc_bytes_dbg = gz_to_bytes(dict_to_btc_json(st.session_state.btc_data))
+            _btc_hash = hashlib.md5(_btc_bytes_dbg).hexdigest()[:10]
+            _btc_records = bytes_to_dict(_btc_bytes_dbg).get("data", [])
+            last_epoch = _btc_records[-1]["t"] if _btc_records else None
+            last_dt = datetime.datetime.utcfromtimestamp(last_epoch) if last_epoch else "?"
+            st.write(f"Ab download honi wali file: {len(_btc_records)} rows | Last candle: {last_dt} | "
+                     f"Size: {len(_btc_bytes_dbg)/1024:.1f} KB | MD5: `{_btc_hash}`")
+        except Exception as e:
+            st.error(f"⚠ File generate karte waqt error: {e}")
+    else:
+        st.write("Session me BTC data hi nahi hai.")
+
+    if st.button("🔍 GitHub par abhi jo file hai wo check karo", key="debug_check_github_btc"):
+        with st.spinner("GitHub se fetch ho raha hai..."):
+            gh_raw = github_download(BTC_GZ_FILENAME)
+        if gh_raw:
+            gh_hash = hashlib.md5(gh_raw).hexdigest()[:10]
+            gh_records = bytes_to_dict(gh_raw).get("data", [])
+            gh_last = gh_records[-1]["t"] if gh_records else None
+            gh_last_dt = datetime.datetime.utcfromtimestamp(gh_last) if gh_last else "?"
+            st.info(f"GitHub par abhi: {len(gh_records)} rows | Last candle: {gh_last_dt} | MD5: `{gh_hash}`")
+            st.caption("Agar ye 'Ab download honi wali file' se match nahi karta, to matlab GitHub abhi purana hai — "
+                        "download karke wahan manually upload karna baaki hai.")
+        else:
+            st.error("GitHub se file fetch nahi ho payi.")
+
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("""
