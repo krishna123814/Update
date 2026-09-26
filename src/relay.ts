@@ -1,10 +1,13 @@
-// Binance depth stream ka URL. Chahe to @depth20@100ms (top-20, 100ms) use karo,
-// ya sirf @depth (full diff stream, thoda zyada heavy).
-const BINANCE_URL = "wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms";
+// Ek DO instance = ek symbol (spot BTCUSDT ho ya kisi strike ka option
+// symbol jaisa "BTC-260808-65000-C"). index.ts har symbol ke liye alag
+// Durable Object route karta hai (idFromName(symbol)), isliye yahan
+// symbol hardcode nahi karna — jo bhi client se query param mein aaya
+// wahi is DO ka "apna" symbol ban jaata hai.
 
 export class BTCDepthRelay {
   state: DurableObjectState;
   binanceSocket: WebSocket | null = null;
+  symbol: string | null = null;
 
   constructor(state: DurableObjectState, _env: unknown) {
     this.state = state;
@@ -17,6 +20,13 @@ export class BTCDepthRelay {
       });
     }
 
+    const url = new URL(request.url);
+    const symbol = url.searchParams.get("symbol");
+    if (!symbol) {
+      return new Response("Missing ?symbol= query param", { status: 400 });
+    }
+    this.symbol = symbol.toLowerCase();
+
     await this.ensureBinanceConnection();
 
     const pair = new WebSocketPair();
@@ -28,13 +38,18 @@ export class BTCDepthRelay {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // Binance se connection banata hai agar pehle se open nahi hai.
+  // Binance options depth stream se connection banata hai agar pehle se
+  // open nahi hai. Symbol format: BINANCE options symbol as-is
+  // (e.g. "BTC-260808-65000-C") — options stream lowercase leta hai.
   async ensureBinanceConnection(): Promise<void> {
     if (this.binanceSocket && this.binanceSocket.readyState === WebSocket.OPEN) {
       return;
     }
+    if (!this.symbol) return;
 
-    const resp = await fetch(BINANCE_URL, {
+    const binanceUrl = `wss://nbstream.binance.com/eoptions/ws/${this.symbol}@depth@100ms`;
+
+    const resp = await fetch(binanceUrl, {
       headers: { Upgrade: "websocket" },
     });
 
@@ -78,7 +93,7 @@ export class BTCDepthRelay {
     _reason: string
   ): Promise<void> {
     // Agar sab clients disconnect ho jaayein to Binance socket khula rehne do —
-    // agla client aayega to turant data milega, reconnect ka wait nahi karna padega.
+    // agla client (same strike) aayega to turant data milega.
   }
 
   async webSocketError(_ws: WebSocket): Promise<void> {}
