@@ -47,7 +47,10 @@ export class BTCDepthRelay {
     }
     if (!this.symbol) return;
 
-    const binanceUrl = `wss://nbstream.binance.com/eoptions/ws/${this.symbol}@depth@100ms`;
+    // NOTE: Cloudflare Workers mein outbound WS-upgrade fetch ke liye URL
+    // scheme "https://" hona chahiye, "wss://" nahi — "wss://" silently
+    // fail ho jaata hai (resp.webSocket hamesha null milta hai).
+    const binanceUrl = `https://nbstream.binance.com/eoptions/ws/${this.symbol}@depth@100ms`;
 
     const resp = await fetch(binanceUrl, {
       headers: { Upgrade: "websocket" },
@@ -55,7 +58,9 @@ export class BTCDepthRelay {
 
     const ws = (resp as unknown as { webSocket: WebSocket | null }).webSocket;
     if (!ws) {
-      throw new Error("Binance ne websocket upgrade nahi diya");
+      throw new Error(
+        `Binance ne websocket upgrade nahi diya (status=${resp.status})`
+      );
     }
 
     ws.accept();
