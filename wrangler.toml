@@ -8,4 +8,4 @@ class_name = "BTCDepthRelay"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["BTCDepthRelay"]
+new_sqlite_classes = ["BTCDepthRelay"]
