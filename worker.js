@@ -1,5 +1,8 @@
 export default {
   async fetch(req, env) {
+    if (!env.DAV_USER || !env.DAV_PASS || !env.HF_TOKEN || !env.HF_ORIGIN) {
+      return new Response("Worker secrets missing", { status: 500 });
+    }
     const want = "Basic " + btoa(env.DAV_USER + ":" + env.DAV_PASS);
     if (req.headers.get("Authorization") !== want) {
       return new Response("Unauthorized", {
